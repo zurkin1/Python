@@ -1,3 +1,8 @@
+---
+name: md-fixup
+description: Clean up and reformat a PDF-extracted or OCR'd book's markdown into a readable, well-structured file — builds a title/author header and cover image, reformats the table of contents, inserts chapter/section headers, strips OCR garbage (running page headers, stray symbols, page numbers), and fixes reversed parentheses/brackets and reversed citation order common in Hebrew RTL OCR output. Use when the user has a raw OCR- or PDF-extracted .md file they want cleaned up and structured.
+---
+
 # md-fixup
 
 Clean up and reformat a PDF-extracted or OCR'd book into a readable, well-structured Markdown file.

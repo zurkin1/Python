@@ -1,3 +1,8 @@
+---
+name: txt-to-epub
+description: Convert a plain-text, markdown, docx, or PDF book into a clean, readable EPUB with proper chapter structure, headers, and RTL support for Hebrew books. Use whenever the user wants a book manuscript or extracted book text turned into an EPUB e-reader file, including Hebrew/RTL books.
+---
+
 # txt-to-epub
 
 Convert a plain-text book file (OCR/extracted) into a clean, readable EPUB with proper chapter structure, headers, and RTL support for Hebrew books.

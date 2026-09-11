@@ -1,3 +1,8 @@
+---
+name: txt-to-md
+description: Convert a markdown book specifically (not PDF/OCR/DOCX — use txt-to-epub for those) into a clean EPUB with correct chapter structure, metadata, images, and optional RTL support. Use when the input is already a well-formed .md file.
+---
+
 # txt-to-md
 
 Convert a Markdown book into a clean EPUB with correct chapter structure, metadata, images, and optional RTL support.

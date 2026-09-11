@@ -1,3 +1,8 @@
+---
+name: fix-docx
+description: Diagnose and fix slow-opening/saving .docx files caused by PDF-to-Word conversion bloat — per-character run fragmentation, redundant default formatting, duplicate mc:Fallback textbox copies, and thousands of floating text boxes. Use whenever the user says a Word document is huge, laggy, slow to open or save, or was produced by converting a PDF to Word and now behaves badly.
+---
+
 # fix-docx
 
 Diagnose and fix slow-opening/saving `.docx` files caused by PDF-to-Word conversion bloat.

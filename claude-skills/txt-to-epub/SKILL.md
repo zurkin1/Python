@@ -80,8 +80,9 @@ print('Sample text:', repr(text[:300]))
 |---|---|
 | `get_text` has Hebrew chars AND text looks like coherent sentences | **Verify pdftotext works** (see below), then Steps 0–3 |
 | `get_text` has Hebrew BUT newlines ≈ word count (one word per line) | **Step 0.6** — custom font encoding, word-by-word extraction |
-| `get_text` has zero Hebrew chars (only spaces/Latin) | **Step 0.6** — custom font encoding, word-by-word extraction |
-| `get_text` has zero Hebrew AND zero words from `get_text('words')` | **Pure scan — no text layer.** Cannot convert. Tell the user to OCR first (Google Docs or Adobe Acrobat), then rerun on the resulting `.docx`. |
+| `get_text` has zero Hebrew chars (only spaces/Latin) AND the Latin text looks like a **plausible remap** (e.g. runs of consistent-looking short tokens, a named/custom embedded font) | **Step 0.6** — custom font encoding, word-by-word extraction |
+| `get_text` has zero Hebrew chars AND the "text" is **incoherent garbage** (random short Latin fragments with no discernible pattern) AND the page has a large embedded raster image | **Corrupted/bogus text layer over a real scan — go to Step 0.7 (OCR).** Step 0.6 will not help: it only fixes word *order*, not wrong *characters*, and a garbage glyph map produces garbage at any granularity. |
+| `get_text` has zero Hebrew AND zero words from `get_text('words')` | **Pure scan — no text layer.** Go to **Step 0.7 (OCR)**. |
 
 **Critical: PyMuPDF `get_text()` working does NOT guarantee pdftotext works.** Some PDFs use font encodings that PyMuPDF resolves but pdftotext cannot. Before committing to the pdftotext pipeline, verify with one command:
 
@@ -92,7 +93,35 @@ pdftotext -layout input.pdf - | python3 -X utf8 -c "import sys,re; t=sys.stdin.r
 - If output is `0 Hebrew chars` → **go to Step 0.6** (PyMuPDF word extraction), even though `get_text()` showed Hebrew
 - If output has Hebrew chars → proceed with pdftotext pipeline (Steps 0–3)
 
-The last two cases in the table happen when the PDF uses a **custom/proprietary font encoding**. **Do NOT run pdftotext.** Do NOT try `rawdict` or `blocks` extraction — they fail for the same reason. Go directly to Step 0.6.
+The middle two cases in the table happen when the PDF uses a **custom/proprietary font encoding**. **Do NOT run pdftotext.** Do NOT try `rawdict` or `blocks` extraction — they fail for the same reason. Go directly to Step 0.6.
+
+**Telling "fixable custom encoding" (Step 0.6) apart from "corrupted/bogus text layer" (Step 0.7):** both show up as `get_text` returning non-Hebrew Latin garbage, but they need completely different fixes. One quick check distinguishes them:
+
+```python
+python3 -X utf8 -c "
+import fitz
+doc = fitz.open('input.pdf')
+page = doc[min(5, len(doc)-1)]
+d = page.get_text('dict')
+fonts = set()
+for b in d['blocks']:
+    for l in b.get('lines', []):
+        for s in l.get('spans', []):
+            fonts.add(s.get('font', '?'))
+print('fonts used:', fonts)
+print('page images:', len(page.get_images()))
+for img in page.get_images():
+    rects = page.get_image_rects(img[0])
+    if rects:
+        r = rects[0]
+        area_frac = (r.width * r.height) / (page.rect.width * page.rect.height)
+        print(f'  image covers {area_frac:.0%} of the page')
+"
+```
+
+- If the font name is a **generic fallback** (`Helvetica`, `Arial`, `TimesNewRoman`) rather than a custom/named book font, AND there's an image covering most of the page — the "text" is very likely a bogus/leftover layer unrelated to the actual book content, not the real (if garbled) typeface. **Go to Step 0.7.**
+- If the font has a **distinct custom/subsetted name** (something like `ABCDEF+FrankRuhl` or a book-specific family) — this is much more likely a genuine custom encoding that position-based extraction (Step 0.6) can recover, since real scanned-book fonts are usually named, even when subsetted.
+- When in doubt, just try Step 0.6 first — if the recovered "words" still don't form any recognizable Hebrew after re-ordering, fall back to Step 0.7. Don't spend more than one exploration command deciding; the OCR path in Step 0.7 is fully self-contained and works regardless.
 
 ---
 
@@ -304,6 +333,65 @@ p.caption { direction: rtl; text-align: right; font-size: 0.9em; color: #333;
 - Running headers split across two close y-values (y=52 + y=60). Both < 85 → both stripped.
 - Some section titles ONLY appear in running headers and never as a body heading. The opener-page scan won't find them. Accept this — they'll render as body paragraphs, which is readable.
 - Do NOT auto-detect epigraphs with y-threshold heuristics. Epigraph mis-detection causes body text to be swallowed. Just render everything at y > 310 as body paragraphs on opener pages.
+
+---
+
+### Step 0.7 — OCR fallback (corrupted text layer or pure scan)
+
+**Use when Step 0.1 routes here: `get_text` returns incoherent Latin garbage backed by a full-page image, or returns nothing at all.** Unlike Step 0.6, no amount of repositioning fixes this — the glyph-to-Unicode map itself is wrong or absent, so every extraction mode (`text`, `words`, `rawdict`, `blocks`) returns the same garbage or nothing. The fix is to stop trying to read the PDF's text layer and read the page images instead.
+
+**Do this in-session rather than telling the user to go OCR it externally first (Google Docs, Adobe Acrobat).** A self-contained Tesseract pass is faster for the user, keeps the whole conversion in one place, and Tesseract's Hebrew model is good enough that it usually needs only light cleanup — comparable to typical scanner OCR quality, sometimes better.
+
+**One-time setup check — Hebrew language data is usually NOT installed by default:**
+
+```bash
+tesseract --list-langs
+```
+
+If `heb` is not listed, download it once. `Program Files\Tesseract-OCR\tessdata` typically isn't writable without elevation, so put it somewhere you own and point `TESSDATA_PREFIX` there instead of trying to write into the Tesseract install directory:
+
+```python
+# PowerShell / any writable directory works — this one survives the session
+import os, urllib.request
+tessdata_dir = os.path.expanduser(r'~\AppData\Local\Temp\claude\tessdata')
+os.makedirs(tessdata_dir, exist_ok=True)
+urllib.request.urlretrieve(
+    'https://github.com/tesseract-ocr/tessdata_fast/raw/main/heb.traineddata',
+    os.path.join(tessdata_dir, 'heb.traineddata'),
+)
+```
+
+Then set `os.environ['TESSDATA_PREFIX'] = tessdata_dir` (as a plain env var, not a tesseract CLI flag) before every OCR call in the same Python process/session.
+
+**OCR each page as an image at 3x scale** (higher than 3x rarely improves accuracy further but does slow things down; lower than 2x measurably hurts small-font accuracy):
+
+```python
+import os
+os.environ['TESSDATA_PREFIX'] = tessdata_dir  # from setup above
+import fitz, pytesseract
+from PIL import Image
+import io
+
+doc = fitz.open('input.pdf')
+pages_text = []
+for page in doc:
+    pix = page.get_pixmap(matrix=fitz.Matrix(3, 3))
+    img = Image.open(io.BytesIO(pix.tobytes('png')))
+    pages_text.append(pytesseract.image_to_string(img, lang='heb'))
+full_text = '\x0c'.join(pages_text)   # \x0c page-break marker, same as pdftotext's convention
+```
+
+For a long book, OCR the whole thing in one background run (each page takes roughly 1–2 seconds) rather than iterating page-by-page interactively.
+
+**What OCR gives you that the garbled text layer couldn't:**
+- Correct logical (reading-order) Hebrew, including correct word order within lines — no visual-order reversal to fix (see md-fixup's Step 5.5 for what that bug looks like when it *is* present in a working text layer).
+- Genuine blank-line paragraph breaks are usually preserved by Tesseract's own layout analysis — check this before writing any paragraph-reflow logic; the source may already give you one paragraph per blank-line-delimited block, in which case Steps 1–2's line-merging heuristics are unnecessary.
+
+**Known pitfalls (OCR path):**
+- **Don't re-run the reversed-parens/word-order fixes from md-fixup on OCR output** — those exist for garbled *extraction*, not garbled *recognition*. OCR output is already in logical order; running a reversal fix on correct text breaks it.
+- **A paragraph can still get split by a spurious page-boundary blank line** — Tesseract emits a paragraph break at the end of every page's text regardless of whether the source paragraph actually continues onto the next page. Before accepting per-page blank lines as real paragraph breaks, check whether the last line of page *N* ends in sentence-final punctuation (`.!?:"`); if it doesn't, merge it with the first line of page *N+1* instead of treating the gap as a paragraph break. Preserve *all other* blank-line breaks as-is — only special-case the exact page seam, don't strip blank lines wholesale (that collapses whole pages into one giant paragraph).
+- **Chapter-divider OCR noise** — a running "Chapter N" style prefix can get OCR'd with a substituted look-alike letter (e.g. Hebrew פ mistaken for ו, giving a variant prefix instead of the real one) on some occurrences but not others. Detect the chapter prefix by matching an explicit list of the OCR variants you actually observe in this book's own headers (build the list from the first exploration pass) rather than a generic wildcard — a loose wildcard prefix pattern will also match ordinary prose that happens to start with a short word followed by a number word (e.g. "second-order," "type two"), creating false chapter breaks.
+- **Single-digit footnote/endnote numbers are the most OCR-fragile text on the page** (smallest font, often superscript-sized) — expect a few dropped digits leaving a stray leading period where a number should be (`. text` instead of `3. text`). Spot-check the endnotes section specifically; this is usually the only place OCR quality visibly dips below the body text.
 
 ---
 
